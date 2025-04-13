@@ -1,0 +1,75 @@
+service: task-service
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ap-southeast-2
+
+
+resources:
+  Resources:
+    TaskSnsTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: task-topic
+
+    TaskQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: task-queue
+
+    TaskSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: !Ref TaskSnsTopic
+        Protocol: sqs
+        Endpoint: !GetAtt TaskQueue.Arn
+      DependsOn:
+        - TaskQueue
+        - TaskSnsTopic
+
+    SqsQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - !Ref TaskQueue
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal: "*"
+              Action: "SQS:SendMessage"
+              Resource: !GetAtt TaskQueue.Arn
+              Condition:
+                ArnEquals:
+                  "aws:SourceArn": !Ref TaskSnsTopic
+
+    TaskEventRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Name: task-event-rule
+        EventPattern:
+          source:
+            - authService
+          detail-type:
+            - userLoggedIn
+        Targets:
+          - Arn: !Ref TaskSnsTopic
+            Id: TargetTaskSns
+functions:
+  sqsHandler:
+    handler: handler.processLoginEvent
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - TaskQueue
+              - Arn
+
+  httpHandler:
+    handler: handler.getProcessedTasks
+    events:
+      - http:
+          path: tasks
+          method: get
+          cors: true
